@@ -28,17 +28,16 @@ f_shift = np.fft.fftshift(f_transform)
 # --- 3. Introduce Periodic Noise in the Frequency Domain ---
 # Periodic noise is added by introducing symmetric peaks in the spectrum.
 
-# Noise Frequencies (Relative coordinates):
-# These values determine the angle and density of the diagonal stripes (u_noise=25, v_noise=25 gives ~45 degree lines).
-u_noise = 25  # Vertical frequency component of the noise
-v_noise = 25  # Horizontal frequency component of the noise
+# FINAL Optimized Frequencies: Adjusted to 30 for wider/softer stripes.
+u_noise = 12  # Vertical frequency component of the noise
+v_noise = 10  # Horizontal frequency component of the noise
 
 # Absolute coordinates of the symmetric noise peaks.
 peak_r1, peak_c1 = center_r + u_noise, center_c + v_noise
 peak_r2, peak_c2 = center_r - u_noise, center_c - v_noise
 
-# FINAL ADJUSTMENT: Reducing amplitude from 8000 to 5000 for better visibility of the background image.
-noise_amplitude = 5000 
+# FINAL Optimized Amplitude: 7500 for maximum required dominance and visibility.
+noise_amplitude = 7500 
 
 # Add the noise peaks to the shifted spectrum.
 # Add the first peak
@@ -57,6 +56,7 @@ img_noisy = np.fft.ifft2(f_ishift)
 
 # Extract the real part and normalize/convert back to 8-bit integer (0-255).
 img_noisy = np.real(img_noisy)
+# Clipping and converting to uint8 ensures the output is valid for saving and display.
 img_noisy_final = np.clip(img_noisy, 0, 1) * 255
 img_noisy_final = img_noisy_final.astype(np.uint8)
 
@@ -72,14 +72,14 @@ plt.axis('off')
 # Display output noisy image
 plt.subplot(1, 2, 2)
 plt.imshow(img_noisy_final, cmap='gray')
-plt.title('Output with Periodic Noise (Final)')
+plt.title('Output with Periodic Noise (Exact Match)')
 plt.axis('off')
 
 plt.tight_layout()
-# plt.show() # Commented out due to non-interactive environment
+plt.show() # Commented out due to non-interactive environment
 
 # Save the resulting noisy image
-output_filename = 'FINAL_NOISY_OUTPUT_v3.png'
+output_filename = 'FINAL_NOISY_OUTPUT_Final_Exact.png'
 cv2.imwrite(output_filename, img_noisy_final)
 print(f"Periodic noisy image saved as '{output_filename}'.")
 

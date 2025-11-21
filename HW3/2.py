@@ -1,120 +1,126 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
-import os
 
-def transfer_ripples_via_fft():
+def improved_ripple_transfer():
     # --- 1. Load Images ---
-    # Load the source ripple image (Water) in Grayscale
-    # We only need intensity data for the waves.
+    # Load source ripple image (Grayscale)
     img_ripple_src = cv2.imread('3.png', cv2.IMREAD_GRAYSCALE)
-    
-    # Load the target background (Green) in Color
+    # Load target background (Color)
     img_bg_color = cv2.imread('4.png', cv2.IMREAD_COLOR)
 
-    # Check if images were loaded successfully
     if img_ripple_src is None or img_bg_color is None:
-        print("Error: Could not load '3.png' or '4.png'. Make sure files exist in the directory.")
+        print("Error: Images '3.png' or '4.png' not found.")
         return
 
     # --- 2. Resize Source to Match Target ---
-    # Get dimensions of the green background
-    rows, cols, channels = img_bg_color.shape
-    
-    # Resize the water image to match the green image size perfectly
-    # This is necessary for pixel-to-pixel blending later.
+    rows, cols, _ = img_bg_color.shape
     img_ripple_resized = cv2.resize(img_ripple_src, (cols, rows))
 
-    # --- 3. Frequency Domain Processing (FFT) ---
-    # Convert the spatial image to the frequency domain using Fast Fourier Transform.
-    # This allows us to separate "details" (waves) from "general brightness".
-    dft = np.fft.fft2(img_ripple_resized)
-    dft_shift = np.fft.fftshift(dft) # Shift zero frequency (DC component) to the center
+    # --- 3. Frequency Domain Transformation (FFT) ---
+    # Convert image to float for FFT
+    dft = np.fft.fft2(img_ripple_resized.astype(float))
+    dft_shift = np.fft.fftshift(dft)
 
-    # --- 4. High-Pass Filter Construction ---
-    # We want to KEEP the waves (high frequencies) and REMOVE the average lighting (low frequencies).
+    # --- VISUALIZATION TASK: Create Magnitude Spectrum ---
+    # Calculate magnitude spectrum (log scale) to visualize the frequency domain
+    # Formula: 20 * log(1 + |F(u,v)|)
+    magnitude_spectrum = 20 * np.log(np.abs(dft_shift) + 1)
+    
+    # Normalize the spectrum to 0-255 for display/saving
+    magnitude_spectrum_view = cv2.normalize(magnitude_spectrum, None, 0, 255, cv2.NORM_MINMAX)
+    magnitude_spectrum_view = magnitude_spectrum_view.astype(np.uint8)
+
+    # --- 4. Create Gaussian High-Pass Filter ---
+    # Instead of a hard circle (which causes ringing artifacts), we use a Gaussian filter.
+    # This creates smoother, more realistic water ripples.
     crow, ccol = rows // 2, cols // 2
     
-    # Create a mask initialized to 1 (pass everything)
-    mask = np.ones((rows, cols), np.uint8)
+    # Create a grid of coordinates
+    y, x = np.ogrid[:rows, :cols]
+    # Calculate distance from center
+    distance_from_center = np.sqrt((x - ccol)**2 + (y - crow)**2)
     
-    # Define the radius of the center circle to block
-    # A radius of 30-50 is usually good to remove global gradients/lighting.
-    r = 40 
-    
-    # Create a circular mask to block low frequencies in the center
-    center_y, center_x = np.ogrid[:rows, :cols]
-    mask_area = (center_y - crow)**2 + (center_x - ccol)**2 <= r**2
-    mask[mask_area] = 0 # Set center frequencies to 0
-    
-    # --- 5. Apply Filter and Inverse Transform ---
-    # Apply the High-Pass Filter to the frequency domain image
-    fshift_filtered = dft_shift * mask
-    
-    # Shift back the origin
+    # Gaussian Filter Formula: 1 - exp(-D^2 / (2 * sigma^2))
+    # sigma controls the cutoff frequency. 
+    # Higher sigma = cuts more low frequencies (removing lighting/shadows).
+    sigma = 30 
+    gaussian_mask = 1 - np.exp(-(distance_from_center**2) / (2 * (sigma**2)))
+
+    # Apply the mask to the shifted FFT
+    fshift_filtered = dft_shift * gaussian_mask
+
+    # --- 5. Inverse FFT (Return to Image Space) ---
     f_ishift = np.fft.ifftshift(fshift_filtered)
-    
-    # Perform Inverse Fast Fourier Transform to get back to the spatial domain
     img_back = np.fft.ifft2(f_ishift)
-    img_back = np.real(img_back) # Take the real part of the complex output
+    img_back = np.real(img_back)
 
-    # --- 6. Blending ---
-    # img_back now contains the "pure waves" centered around 0.
-    # Positive values represent wave peaks, negative values represent wave troughs.
-    
-    # Optional: Increase the strength of the ripples (Contrast)
-    ripple_strength = 2.0
-    ripple_layer = img_back * ripple_strength
+    # --- 6. Post-Processing the Ripples ---
+    # Apply a slight blur to remove high-frequency digital noise (scan lines)
+    # This makes the water look liquid, not pixelated.
+    img_back_smooth = cv2.GaussianBlur(img_back, (3, 3), 0)
 
-    # Convert background to float to allow negative math operations
+    # Enhance contrast (Gain)
+    gain = 2.5
+    ripple_layer = img_back_smooth * gain
+
+    # --- 7. Blending with Green Background ---
     img_bg_float = img_bg_color.astype(np.float32)
-    
-    # Create a container for the final image
     final_image = np.zeros_like(img_bg_float)
-    
-    # Add the ripple layer to all three color channels (B, G, R)
-    # This modulates the brightness of the green background based on the wave height.
-    final_image[:, :, 0] = img_bg_float[:, :, 0] + ripple_layer # Blue channel
-    final_image[:, :, 1] = img_bg_float[:, :, 1] + ripple_layer # Green channel
-    final_image[:, :, 2] = img_bg_float[:, :, 2] + ripple_layer # Red channel
 
-    # Clip values to ensure they remain in valid [0, 255] range
+    # Add ripples to all channels
+    for i in range(3):
+        final_image[:, :, i] = img_bg_float[:, :, i] + ripple_layer
+
+    # Clip to valid pixel range
     final_image = np.clip(final_image, 0, 255).astype(np.uint8)
 
-    # --- 7. Display and Save Results ---
-    plt.figure(figsize=(12, 8))
+    # --- 8. Display Results ---
+    plt.figure(figsize=(16, 10))
 
-    # Show original ripple source
-    plt.subplot(2, 2, 1)
+    # 1. Source Ripple Image
+    plt.subplot(2, 3, 1)
     plt.imshow(img_ripple_resized, cmap='gray')
-    plt.title('Source Ripple Image (3.png)')
+    plt.title('1. Original Water Source')
     plt.axis('off')
 
-    # Show extracted ripples (High-Pass Filtered)
-    plt.subplot(2, 2, 2)
-    plt.imshow(img_back, cmap='gray')
-    plt.title('Extracted Ripples (Freq Domain Filtered)')
+    # 2. Frequency Domain (Magnitude Spectrum)
+    plt.subplot(2, 3, 2)
+    plt.imshow(magnitude_spectrum_view, cmap='gray')
+    plt.title('2. Frequency Domain (Magnitude Spectrum)')
     plt.axis('off')
 
-    # Show original background
-    plt.subplot(2, 2, 3)
+    # 3. Filter Mask (Gaussian)
+    plt.subplot(2, 3, 3)
+    plt.imshow(gaussian_mask, cmap='gray')
+    plt.title('3. Gaussian High-Pass Filter')
+    plt.axis('off')
+
+    # 4. Extracted Ripples (Pure Signal)
+    plt.subplot(2, 3, 4)
+    plt.imshow(img_back_smooth, cmap='gray')
+    plt.title('4. Extracted Ripples (Cleaned)')
+    plt.axis('off')
+
+    # 5. Original Green Background
+    plt.subplot(2, 3, 5)
     plt.imshow(cv2.cvtColor(img_bg_color, cv2.COLOR_BGR2RGB))
-    plt.title('Original Green Background (4.png)')
+    plt.title('5. Target Background')
     plt.axis('off')
 
-    # Show Final Result
-    plt.subplot(2, 2, 4)
+    # 6. Final Result
+    plt.subplot(2, 3, 6)
     plt.imshow(cv2.cvtColor(final_image, cv2.COLOR_BGR2RGB))
-    plt.title('Final: Ripples Applied to Background')
+    plt.title('6. Final: Ripples on Green')
     plt.axis('off')
 
     plt.tight_layout()
     plt.show()
 
-    # Save the result to disk
-    output_filename = 'final_ripple_result.png'
-    cv2.imwrite(output_filename, final_image)
-    print(f"Processing complete. Image saved as '{output_filename}'")
+    # --- 9. Save Files ---
+    cv2.imwrite('FFT_Spectrum.png', magnitude_spectrum_view)
+    cv2.imwrite('Final_Realistic_Ripple.png', final_image)
+    print("Images saved: 'FFT_Spectrum.png' and 'Final_Realistic_Ripple.png'")
 
 if __name__ == "__main__":
-    transfer_ripples_via_fft()
+    improved_ripple_transfer()

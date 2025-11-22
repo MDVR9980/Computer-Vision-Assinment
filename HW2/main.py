@@ -3,65 +3,60 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import generic_filter
 import os
+import sys
+import csv
 
 # =========================================================
 # 1. NOISE GENERATION FUNCTIONS (Task 1)
 # =========================================================
 def add_noise(image, noise_type, intensity=0.05, mean=0, var=0.01):
     """
-    Adds specific noise types to an image.
-    Args:
-        image: Input grayscale image (numpy array).
-        noise_type: 'salt_pepper', 'salt', 'pepper', 'gaussian', 'uniform'.
-        intensity: Probability for impulse noise or scale for uniform noise.
-        mean: Mean for Gaussian noise.
-        var: Variance for Gaussian noise.
-    Returns:
-        Noisy image (uint8).
+    Adds specific noise types to an image based on the assignment requirements.
     """
     row, col = image.shape
     noisy_image = image.copy()
     
+    # Salt and Pepper Noise
     if noise_type == "salt_pepper":
-        # Salt and Pepper: randomly set pixels to 0 or 255
-        s_vs_p = 0.5 # Ratio between salt and pepper
         amount = intensity
+        s_vs_p = 0.5 # Salt vs Pepper ratio
         
-        # Add Salt (White)
+        # Add Salt (White pixels)
         num_salt = np.ceil(amount * image.size * s_vs_p)
         coords = [np.random.randint(0, i - 1, int(num_salt)) for i in image.shape]
         noisy_image[tuple(coords)] = 255
         
-        # Add Pepper (Black)
+        # Add Pepper (Black pixels)
         num_pepper = np.ceil(amount * image.size * (1. - s_vs_p))
         coords = [np.random.randint(0, i - 1, int(num_pepper)) for i in image.shape]
         noisy_image[tuple(coords)] = 0
         
+    # Salt Noise (White only)
     elif noise_type == "salt":
-        # Only Salt (White)
         num_salt = np.ceil(intensity * image.size)
         coords = [np.random.randint(0, i - 1, int(num_salt)) for i in image.shape]
         noisy_image[tuple(coords)] = 255
 
+    # Pepper Noise (Black only)
     elif noise_type == "pepper":
-        # Only Pepper (Black)
         num_pepper = np.ceil(intensity * image.size)
         coords = [np.random.randint(0, i - 1, int(num_pepper)) for i in image.shape]
         noisy_image[tuple(coords)] = 0
         
+    # Gaussian Noise
     elif noise_type == "gaussian":
-        # Gaussian / Normal Distribution Noise
-        sigma = var ** 0.5
+        # Adjust sigma based on variance and intensity
+        sigma = (var + intensity) ** 0.5 
         gauss = np.random.normal(mean, sigma, (row, col))
         gauss = gauss.reshape(row, col)
         
-        # Normalize, add noise, and clip back to 0-255
+        # Normalize to 0-1, add noise, clip, and convert back to 0-255
         noisy_image = noisy_image / 255.0 + gauss
         noisy_image = np.clip(noisy_image, 0, 1) * 255
         noisy_image = noisy_image.astype(np.uint8)
 
+    # Uniform Noise
     elif noise_type == "uniform":
-        # Uniform Distribution Noise
         noise = np.random.uniform(-intensity*255, intensity*255, (row, col))
         noisy_image = noisy_image.astype(np.float32) + noise
         noisy_image = np.clip(noisy_image, 0, 255).astype(np.uint8)
@@ -73,38 +68,35 @@ def add_noise(image, noise_type, intensity=0.05, mean=0, var=0.01):
 # =========================================================
 def apply_filter(noisy_img, filter_type, kernel_size=3, Q=1.5, d=2):
     """
-    Applies different spatial filters to remove noise.
-    Args:
-        filter_type: 'median', 'mean', 'alpha_trimmed', 'contraharmonic'.
-        Q: Order of the Contraharmonic filter.
-        d: Trim parameter for Alpha-trimmed mean.
+    Applies spatial filters to remove noise.
     """
+    # Median Filter
     if filter_type == "median":
-        # Standard Median Filter (Great for Salt & Pepper)
         return cv2.medianBlur(noisy_img, kernel_size)
     
+    # Arithmetic Mean Filter
     elif filter_type == "mean": 
-        # Arithmetic Mean Filter (Good for Gaussian)
         return cv2.blur(noisy_img, (kernel_size, kernel_size))
     
+    # Alpha-trimmed Mean Filter
     elif filter_type == "alpha_trimmed":
-        # Alpha-trimmed Mean Filter (Hybrid of Mean and Median)
         def alpha_trimmed_mean_algo(buffer):
             sort_buf = np.sort(buffer)
-            # Trim 'd' pixels from start and end
+            # Trim 'd' pixels from the beginning and end of the sorted array
             trim_slice = sort_buf[d:-d] if d > 0 else sort_buf
             return np.mean(trim_slice)
         
         return generic_filter(noisy_img, alpha_trimmed_mean_algo, size=kernel_size)
 
+    # Contraharmonic Mean Filter
     elif filter_type == "contraharmonic":
-        # Contraharmonic Mean Filter
-        # Formula: sum(pixel^(Q+1)) / sum(pixel^Q)
         img_float = noisy_img.astype(np.float32)
-        epsilon = 1e-5 # Avoid division by zero
+        epsilon = 1e-5 # Small value to avoid division by zero
         
-        # Calculate numerator and denominator using boxFilter (which sums neighbors)
+        # Calculate numerator: sum(pixel^(Q+1))
         numerator = cv2.boxFilter(np.power(img_float + epsilon, Q + 1), -1, (kernel_size, kernel_size), normalize=False)
+        
+        # Calculate denominator: sum(pixel^Q)
         denominator = cv2.boxFilter(np.power(img_float + epsilon, Q), -1, (kernel_size, kernel_size), normalize=False)
         
         result = numerator / (denominator + epsilon)
@@ -113,108 +105,107 @@ def apply_filter(noisy_img, filter_type, kernel_size=3, Q=1.5, d=2):
     return noisy_img
 
 # =========================================================
-# 3. METRIC CALCULATION FUNCTIONS (Tasks 2, 4, 5)
+# 3. METRIC CALCULATION (Tasks 2, 4, 5)
 # =========================================================
-
-def count_affected_pixels(f, g):
+def calculate_metrics(f, g, k):
     """
-    Task 2: Count pixels that were affected by noise.
-    f: Original Image
-    g: Noisy Image
+    Calculates the specific metrics required by the assignment.
+    Args:
+        f: Original Image (Clean)
+        g: Noisy Image
+        k: Filtered/Restored Image
     """
-    # Returns count where f is not equal to g
-    diff = f != g
-    return np.sum(diff)
-
-def count_corrected_pixels(f, g, k):
-    """
-    Task 4: Count noisy pixels that were fully corrected to their original value.
-    f: Original Image
-    g: Noisy Image
-    k: Filtered Image
-    """
-    # Condition: Pixel was noisy in g (f!=g) AND is now correct in k (k==f)
-    noisy_in_g = (f != g)
-    corrected_in_k = (k == f)
-    return np.sum(noisy_in_g & corrected_in_k)
-
-def count_corrupted_pixels(f, g, k):
-    """
-    Task 5: Count clean pixels that were corrupted (changed) by the filter.
-    f: Original Image
-    g: Noisy Image
-    k: Filtered Image
-    """
-    # Condition: Pixel was clean in g (f==g) BUT changed in k (k!=f)
-    clean_in_g = (f == g)
-    changed_in_k = (k != f)
-    return np.sum(clean_in_g & changed_in_k)
+    # Task 2: Count pixels affected by noise
+    # Logic: f (original) is not equal to g (noisy)
+    affected_count = np.sum(f != g)
+    
+    # Task 4: Count noisy pixels that were fully corrected to original state
+    # Logic: (Pixel was noisy in g) AND (Pixel is now correct in k)
+    corrected_count = np.sum((f != g) & (k == f))
+    
+    # Task 5: Count clean pixels that were corrupted/ruined by the filter
+    # Logic: (Pixel was clean in g) BUT (Pixel is different in k)
+    corrupted_count = np.sum((f == g) & (k != f))
+    
+    return affected_count, corrected_count, corrupted_count
 
 # =========================================================
 # 4. MAIN EXECUTION LOOP
 # =========================================================
 def main():
-    # --- Configuration ---
-    input_filename = 'input_image.jpg'  # REPLACE with your image path
+    # Input configuration
+    target_image = 'Lenna.png'
+    output_dir = "HW2_Results"
     
-    # Check if image exists
-    if not os.path.exists(input_filename):
-        print(f"Warning: '{input_filename}' not found. Generating a dummy image for demonstration.")
-        # Create a dummy grayscale image (200x200)
-        f = np.zeros((200, 200), dtype=np.uint8)
-        cv2.rectangle(f, (50, 50), (150, 150), 128, -1)
-        cv2.circle(f, (100, 100), 30, 255, -1)
-    else:
-        f = cv2.imread(input_filename, cv2.IMREAD_GRAYSCALE)
+    # Create output directory if it doesn't exist
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        print(f"Directory '{output_dir}' created.")
 
-    # Define experimental parameters
-    noise_types = ["salt_pepper", "gaussian", "uniform"]
-    filter_types = ["median", "mean", "contraharmonic"]
+    # Check if input image exists
+    if not os.path.exists(target_image):
+        print(f"❌ Error: '{target_image}' not found.")
+        print("Please ensure 'Lenna.png' is in the same directory as this script.")
+        sys.exit(1)
     
-    # Different intensities to test (for the required charts)
-    intensities = [0.05, 0.1, 0.2] 
+    # Load image in Grayscale mode
+    f = cv2.imread(target_image, cv2.IMREAD_GRAYSCALE)
+    if f is None:
+        print("❌ Error: Could not read image. Check file format.")
+        sys.exit(1)
+
+    print(f"✅ Processing image: {target_image} (Resolution: {f.shape})")
+    
+    # --- Experimental Parameters (Based on Assignment) ---
+    noise_types = ["salt_pepper", "salt", "pepper", "gaussian", "uniform"]
+    filter_types = ["median", "mean", "alpha_trimmed", "contraharmonic"]
+    intensities = [0.05, 0.1, 0.2]  # Different intensities for analysis
     kernel_size = 3
+    
+    # Initialize CSV file to store numerical results
+    csv_path = os.path.join(output_dir, "metrics_table.csv")
+    csv_file = open(csv_path, mode='w', newline='')
+    csv_writer = csv.writer(csv_file)
+    
+    # Write CSV Header
+    csv_writer.writerow(["Noise Type", "Intensity", "Filter Type", "Affected Pixels (Task2)", "Corrected Pixels (Task4)", "Corrupted Pixels (Task5)"])
 
-    # Store results for analysis
-    results = []
+    print("\nRunning iterations... (This may take a moment)\n")
+    print(f"{'Noise':<12} | {'Int':<5} | {'Filter':<15} | {'Affected':<8} | {'Corrected':<8} | {'Corrupted':<8}")
+    print("-" * 75)
 
-    # Print Table Header
-    print(f"\n{'Noise Type':<15} {'Intensity':<10} {'Filter Type':<15} {'Affected(T2)':<15} {'Corrected(T4)':<15} {'Corrupted(T5)':<15}")
-    print("=" * 95)
-
-    # Loop through combinations
+    # Loop through all combinations
     for n_type in noise_types:
         for p in intensities:
             # 1. Add Noise (Task 1)
             g = add_noise(f, n_type, intensity=p)
             
-            # 2. Count Affected Pixels (Task 2)
-            affected = count_affected_pixels(f, g)
-
             for f_type in filter_types:
-                # 3. Apply Filter (Task 3)
-                # Note: For Alpha-trimmed, d needs to be < (kernel_size^2)/2
-                # Note: For Contraharmonic, Q=1.5 removes pepper, Q=-1.5 removes salt
-                k = apply_filter(g, f_type, kernel_size=kernel_size, Q=1.5, d=2)
-
-                # 4. Count Corrected Pixels (Task 4)
-                corrected = count_corrected_pixels(f, g, k)
-
-                # 5. Count Corrupted Pixels (Task 5)
-                corrupted = count_corrupted_pixels(f, g, k)
-
-                # Print row in table
-                print(f"{n_type:<15} {p:<10} {f_type:<15} {affected:<15} {corrected:<15} {corrupted:<15}")
+                # Special tuning for Contraharmonic Filter:
+                # Q = positive removes Pepper noise.
+                # Q = negative removes Salt noise.
+                Q_val = 1.5 
+                if n_type == "salt": 
+                    Q_val = -1.5 # Adaptive tuning for Salt noise
                 
-                # Save data for later plotting (if needed)
-                results.append({
-                    "noise": n_type, "intensity": p, "filter": f_type,
-                    "affected": affected, "corrected": corrected, "corrupted": corrupted
-                })
-
-                # --- Visualization (Optional: Save 1 example per category) ---
-                # We save an image only when intensity is 0.1 to avoid creating too many files
-                if p == 0.1:
+                # 3. Apply Filter (Task 3)
+                k = apply_filter(g, f_type, kernel_size=kernel_size, Q=Q_val, d=2)
+                
+                # Calculate Metrics (Tasks 2, 4, 5)
+                affected, corrected, corrupted = calculate_metrics(f, g, k)
+                
+                # Print result to console
+                print(f"{n_type:<12} | {p:<5} | {f_type:<15} | {affected:<8} | {corrected:<8} | {corrupted:<8}")
+                
+                # Save result to CSV
+                csv_writer.writerow([n_type, p, f_type, affected, corrected, corrupted])
+                
+                # --- Save Visual Results ---
+                # We save images for 0.1 and 0.2 intensities to keep the folder manageable
+                if p == 0.1 or p == 0.2: 
+                    filename = f"{n_type}_int{str(p).replace('.','')}_{f_type}.png"
+                    save_path = os.path.join(output_dir, filename)
+                    
                     plt.figure(figsize=(12, 4))
                     
                     plt.subplot(131)
@@ -224,7 +215,7 @@ def main():
                     
                     plt.subplot(132)
                     plt.imshow(g, cmap='gray')
-                    plt.title(f'Noisy (g)\n{n_type}')
+                    plt.title(f'Noisy (g)\n{n_type} ({p})')
                     plt.axis('off')
                     
                     plt.subplot(133)
@@ -232,12 +223,12 @@ def main():
                     plt.title(f'Filtered (k)\n{f_type}')
                     plt.axis('off')
                     
-                    # Save the figure
-                    save_name = f"Result_{n_type}_{f_type}.png"
-                    plt.savefig(save_name)
-                    plt.close() 
+                    plt.savefig(save_path, bbox_inches='tight')
+                    plt.close() # Close figure to free memory
 
-    print("\nProcessing complete. Check the directory for output images.")
+    csv_file.close()
+    print(f"\n✅ All tasks completed successfully.")
+    print(f"📂 Images and 'metrics_table.csv' have been saved in the '{output_dir}' folder.")
 
 if __name__ == "__main__":
     main()
